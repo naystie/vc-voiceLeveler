@@ -1,0 +1,96 @@
+.vc-voice-leveler-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25em;
+}
+
+.vc-voice-leveler-card {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.vc-voice-leveler-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+}
+
+.vc-voice-leveler-row + .vc-voice-leveler-row,
+.vc-voice-leveler-footer {
+    border-top: 1px solid var(--border-subtle);
+}
+
+.vc-voice-leveler-who {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.vc-voice-leveler-name,
+.vc-voice-leveler-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vc-voice-leveler-label {
+    color: var(--text-muted);
+}
+
+.vc-voice-leveler-meter {
+    position: relative;
+    flex: 0 0 72px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--slider-track-background, var(--background-mod-strong));
+}
+
+.vc-voice-leveler-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    border-radius: inherit;
+    background: var(--interactive-muted);
+    transition: width 0.25s ease;
+}
+
+.vc-voice-leveler-fill.vc-voice-leveler-leveled {
+    background: var(--brand-500);
+}
+
+.vc-voice-leveler-notch {
+    position: absolute;
+    top: -1px;
+    bottom: -1px;
+    left: 50%;
+    width: 2px;
+    margin-left: -1px;
+    background: var(--card-background-default);
+}
+
+.vc-voice-leveler-value {
+    flex: 0 0 36px;
+    color: var(--text-muted);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.vc-voice-leveler-value.vc-voice-leveler-leveled {
+    color: var(--text-default);
+}
+
+.vc-voice-leveler-footer {
+    display: flex;
+    justify-content: flex-end;
+    padding: 8px 16px;
+}
+
+.vc-voice-leveler-empty {
+    align-items: center;
+    flex-direction: row;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px;
+}
