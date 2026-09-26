@@ -166,6 +166,7 @@ const settings = definePluginSettings({
     },
     ignoreBots: {
         type: OptionType.BOOLEAN,
+        description: "",
         default: true,
         onChange: relevel,
         hidden: simpleMode
