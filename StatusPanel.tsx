@@ -98,7 +98,7 @@ export function StatusPanel() {
 
     return (
         <div className={cl("panel")}>
-            <SettingsSection name="In This Call" id="vc-voice-leveler-status" description="Blue means Auto Level changed it.">
+            <SettingsSection name="In This Call" id="vc-voice-leveler-status" description="Blue means auto level changed it">
                 {!active ? (
                     <Empty>
                         <BaseText size="sm" defaultColor={false} className={cl("label")}>Auto Level is turned off.</BaseText>
