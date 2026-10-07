@@ -5,23 +5,21 @@
  */
 
 export const TICK_MS = 250;
+export const LISTEN_SECONDS = 20;
+const LISTEN_SAMPLES = LISTEN_SECONDS * 1000 / TICK_MS;
+const SPEECH_SAMPLES = 60_000 / TICK_MS;
 const MIN_UTTERANCE_SAMPLES = 3;
 const MAX_UTTERANCE_SAMPLES = 40;
-const HISTORY_UTTERANCES = 24;
-const MIN_UTTERANCES = 6;
-const RECENT_UTTERANCES = 3;
-const SHIFT_DB = 10;
-const NOISE_GAP_DB = 25;
-const REFERENCE_DB = -10;
+const ACTIVE_MARGIN_DB = 15.9;
+const REFERENCE_DB = -9;
 const ATTACK_DB = 6;
 const RELEASE_DB = 1.5;
 const SURGE_SAMPLES = 4;
 
 export interface Speaker {
     current: number[];
-    utterances: number[];
-    needed: number;
-    shifted: boolean;
+    speech: number[];
+    level: number | null;
     gain: number;
     volume: number | null;
     changedAt: number;
@@ -59,55 +57,44 @@ export function gainOf(volume: number) {
     return 20 * Math.log10(volume / 100);
 }
 
-function median(values: number[]) {
-    const sorted = [...values].sort((a, b) => a - b);
-    return sorted[Math.floor(sorted.length / 2)];
-}
-
 function rms(squares: number[]) {
     return 10 * Math.log10(squares.reduce((sum, square) => sum + square, 0) / squares.length);
+}
+
+// how loud someone is while actually talking like itu p.56 so pauses and quiet trailing bits don't pull it down
+function activeLevel(squares: number[]) {
+    let level = rms(squares);
+
+    for (let i = 0; i < 10; i++) {
+        const threshold = 10 ** ((level - ACTIVE_MARGIN_DB) / 10);
+        const next = rms(squares.filter(square => square > threshold));
+        if (next - level < 0.01) return next;
+
+        level = next;
+    }
+
+    return level;
 }
 
 export function createSpeaker(prior?: number, volume = 100): Speaker {
     return {
         current: [],
-        utterances: prior == null ? [] : Array(MIN_UTTERANCES).fill(prior),
-        needed: MIN_UTTERANCES,
-        shifted: false,
+        speech: [],
+        level: prior ?? null,
         gain: gainOf(volume),
         volume: null,
         changedAt: 0
     };
 }
 
-export function loudness(speaker: Speaker) {
-    const { utterances, needed } = speaker;
-    if (utterances.length < needed) return null;
-
-    const anchor = [...utterances].sort((a, b) => b - a)[Math.floor(utterances.length / 4)];
-    return median(utterances.filter(value => value >= anchor - NOISE_GAP_DB));
-}
-
 function finish(speaker: Speaker, floor: number) {
-    const { current, utterances } = speaker;
+    const { current, speech } = speaker;
     speaker.current = [];
-    if (current.length < MIN_UTTERANCE_SAMPLES) return;
+    if (current.length < MIN_UTTERANCE_SAMPLES || rms(current) < floor) return;
 
-    const level = rms(current);
-    if (level < floor) return;
-
-    utterances.push(level);
-    if (utterances.length > HISTORY_UTTERANCES) utterances.shift();
-
-    const measured = loudness(speaker);
-    if (measured == null || utterances.length < MIN_UTTERANCES + RECENT_UTTERANCES) return;
-
-    const recent = utterances.slice(-RECENT_UTTERANCES);
-    if (recent.every(value => value - measured > SHIFT_DB) || recent.every(value => measured - value > SHIFT_DB)) {
-        speaker.utterances = recent;
-        speaker.needed = RECENT_UTTERANCES;
-        speaker.shifted = true;
-    }
+    speech.push(...current);
+    if (speech.length > SPEECH_SAMPLES) speech.splice(0, speech.length - SPEECH_SAMPLES);
+    if (speech.length >= LISTEN_SAMPLES) speaker.level = activeLevel(speech);
 }
 
 export function observe(speaker: Speaker, level: number | null, floor: number) {
@@ -118,6 +105,10 @@ export function observe(speaker: Speaker, level: number | null, floor: number) {
 
     speaker.current.push(level * level);
     if (speaker.current.length >= MAX_UTTERANCE_SAMPLES) finish(speaker, floor);
+}
+
+export function listened(speaker: Speaker) {
+    return speaker.speech.length * TICK_MS / 1000;
 }
 
 export function volumeFor(measured: number, { level, minVolume, maxVolume, floor }: Limits): Decision | null {

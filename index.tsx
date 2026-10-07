@@ -16,10 +16,10 @@ import definePlugin, { OptionType } from "@utils/types";
 import type { MediaEngineConnection, User } from "@vencord/discord-types";
 import { Alerts, MediaEngineStore, Menu, RTCConnectionStore, SelectedChannelStore, showToast, UserStore, VoiceStateStore } from "@webpack/common";
 
-import { createSpeaker, decide, Decision, fromSlider, limit, Limits, loudness, observe, ramp, Speaker, TICK_MS, toSlider, volumeFor } from "./leveler";
+import { createSpeaker, decide, Decision, fromSlider, limit, Limits, LISTEN_SECONDS, listened, observe, ramp, Speaker, TICK_MS, toSlider, volumeFor } from "./leveler";
 import { Status, StatusPanel, StatusState, useStatus } from "./StatusPanel";
 
-const STORE_KEY = "VoiceLeveler_speakers";
+const STORE_KEY = "VoiceLeveler_levels";
 const PUBLISH_EVERY = 1000 / TICK_MS;
 const SAVE_EVERY = 5 * 60_000 / TICK_MS;
 const DAY = 24 * 60 * 60 * 1000;
@@ -229,10 +229,10 @@ function statusOf(userId: string): Status {
     if (isSkippedBot(userId)) return { label: "Bots are ignored", volume };
 
     const speaker = speakers.get(userId);
-    if (speaker == null || speaker.utterances.length === 0) return { label: "Hasn't talked yet", volume };
+    if (speaker == null || speaker.level == null && speaker.speech.length === 0) return { label: "Hasn't talked yet", volume };
 
     if (speaker.volume == null || speaker.volume === slider) {
-        const label = loudness(speaker) == null ? `Listening (${speaker.utterances.length}/${speaker.needed})` : "No change needed";
+        const label = speaker.level == null ? `Listening (${Math.floor(listened(speaker))}/${LISTEN_SECONDS}s)` : "No change needed";
         return { label, volume };
     }
 
@@ -274,16 +274,13 @@ function apply(speaker: Speaker, { volume, gain }: Decision, now: number) {
 }
 
 function drive(connection: MediaEngineConnection, userId: string, speaker: Speaker, bounds: Limits) {
-    if (speaker.volume == null) return;
-
     const engine = connection.localVolumes[userId] ?? 100;
-    const next = ramp(engine, limit(speaker, speaker.volume, bounds));
+    const next = ramp(engine, limit(speaker, speaker.volume ?? MediaEngineStore.getLocalVolume(userId), bounds));
     if (next !== engine) connection.setLocalVolume(userId, next);
 }
 
 function release(connection: MediaEngineConnection | undefined, userId: string) {
-    const speaker = speakers.get(userId);
-    if (connection && speaker?.volume != null) connection.setLocalVolume(userId, MediaEngineStore.getLocalVolume(userId));
+    if (connection && speakers.has(userId)) connection.setLocalVolume(userId, MediaEngineStore.getLocalVolume(userId));
     speakers.delete(userId);
 }
 
@@ -292,7 +289,16 @@ function releaseAll() {
     for (const userId of [...speakers.keys()]) release(connection, userId);
 }
 
+function forgetExpired() {
+    const expired = Date.now() - settings.store.memory * DAY;
+
+    for (const userId in learned) {
+        if (learned[userId].at <= expired) delete learned[userId];
+    }
+}
+
 function remember() {
+    forgetExpired();
     return DataStore.set(STORE_KEY, learned);
 }
 
@@ -332,15 +338,14 @@ async function tick() {
         const speaker = speakers.get(userId) ?? seed(userId);
         observe(speaker, audio.audioDetected && audio.audioLevel > 0 ? audio.audioLevel : null, bounds.floor);
         drive(connection, userId, speaker, bounds);
-        if (!speaker.shifted && now - speaker.changedAt < settings.store.cooldown * 1000) continue;
+        if (now - speaker.changedAt < settings.store.cooldown * 1000) continue;
 
-        const measured = loudness(speaker);
+        const measured = speaker.level;
         if (measured == null) continue;
 
         learned[userId] = { loudness: measured, at: now };
 
         const decision = decide(measured, bounds, speaker.gain);
-        speaker.shifted = false;
         if (decision) apply(speaker, decision, now);
     }
 
@@ -358,7 +363,7 @@ function relevelNow() {
     const bounds = limits();
 
     for (const speaker of speakers.values()) {
-        const measured = loudness(speaker);
+        const measured = speaker.level;
         if (measured == null) continue;
 
         const decision = volumeFor(measured, bounds);
@@ -504,12 +509,8 @@ export default definePlugin({
     },
 
     async start() {
-        const stored = await DataStore.get<Record<string, Memory>>(STORE_KEY) ?? {};
-        const expired = Date.now() - settings.store.memory * DAY;
-
-        for (const userId in stored) {
-            if (stored[userId].at > expired) learned[userId] = stored[userId];
-        }
+        learned = await DataStore.get<Record<string, Memory>>(STORE_KEY) ?? {};
+        forgetExpired();
 
         sync();
         publish();
