@@ -1,6 +1,6 @@
 /*
  * Vencord, a Discord client mod
- * Copyright (c) 2026 Nays
+ * Copyright (c) 2026 Naystie
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -183,6 +183,7 @@ const settings = definePluginSettings({
     },
     excluded: {
         type: OptionType.CUSTOM,
+        description: "",
         default: [] as string[]
     },
     reset: {
@@ -408,7 +409,7 @@ async function reset() {
     learned = {};
     publish();
     await DataStore.del(STORE_KEY);
-    showToast("Auto Level reset");
+    showToast({ text: "Auto Level reset" });
 }
 
 function toggle(userId: string) {
@@ -439,7 +440,7 @@ const userContextPatch: NavContextMenuPatchCallback = (children, { user }: { use
     const { speakers: status }: StatusState = useStatus();
 
     const group = findGroupChildrenByChildId("user-volume", children);
-    if (!group) return;
+    if (!group || !user) return;
 
     const skipped = isSkippedBot(user.id);
 

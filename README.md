@@ -9,14 +9,14 @@ makes everyone in voice about the same volume
 - turns quiet people up and loud people down
 - you can toggle the **auto level** switch and adjust the **voice level** slider after right clicking the headphone button
 - **auto level** control below every user's volume slider
-- manually moving a user's volume slider stops auto-leveling for them until you disconnect
+- manually moving a user's volume slider stops auto-leveling for them until you leave or switch channels
 - the settings panel shows all participants and their applied volume offsets
 
 ## how it works
 
 - discord voice engine already knows how loud every user's voice. the plugin uses this information four times per second
 - changes are temporary. your user volume settings are never touched
-- it keeps track of how loud users 
+- it goes by how loud someone is over their last minute of talking, so a few quiet words or one loud laugh won't change anything
 
 ## settings
 
@@ -26,7 +26,7 @@ makes everyone in voice about the same volume
 | --- | --- | --- |
 | lowest volume | 50% | floor limit for volume drops |
 | highest volume | 200% | ceiling limit for volume boosts |
-| noise floor | -45 dB | ignores sounds quieter than this |
+| noise floor | -40 dB | ignores sounds quieter than this |
 | tolerance | 3 dB | ignores small changes so sliders don't jump around |
 | wait between changes | 15s | cooldown before adjusting the same person again |
 | shout limit | 10 dB | drops their volume fast if they yell |
@@ -36,7 +36,7 @@ makes everyone in voice about the same volume
 
 ## heads up
 
-- needs between 5 to 10 seconds of speech before making any change. after that it will recognize them and next time around will fix them immediately when they join.
+- needs about 20 seconds of someone talking before making any change. after that it will recognize them and next time around will fix them immediately when they join.
 - it works only on the desktop app
 
 ## install
