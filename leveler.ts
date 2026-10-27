@@ -90,21 +90,22 @@ export function createSpeaker(prior?: number, volume = 100): Speaker {
 function finish(speaker: Speaker, floor: number) {
     const { current, speech } = speaker;
     speaker.current = [];
-    if (current.length < MIN_UTTERANCE_SAMPLES || rms(current) < floor) return;
+    if (current.length < MIN_UTTERANCE_SAMPLES || rms(current) < floor) return null;
 
     speech.push(...current);
     if (speech.length > SPEECH_SAMPLES) speech.splice(0, speech.length - SPEECH_SAMPLES);
-    if (speech.length >= LISTEN_SAMPLES) speaker.level = activeLevel(speech);
+    if (speech.length < LISTEN_SAMPLES) return null;
+
+    speaker.level = activeLevel(speech);
+    return speaker.level;
 }
 
+// returns the new level only when it was just measured
 export function observe(speaker: Speaker, level: number | null, floor: number) {
-    if (level == null) {
-        if (speaker.current.length) finish(speaker, floor);
-        return;
-    }
+    if (level == null) return speaker.current.length ? finish(speaker, floor) : null;
 
     speaker.current.push(level * level);
-    if (speaker.current.length >= MAX_UTTERANCE_SAMPLES) finish(speaker, floor);
+    return speaker.current.length >= MAX_UTTERANCE_SAMPLES ? finish(speaker, floor) : null;
 }
 
 export function listened(speaker: Speaker) {

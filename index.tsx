@@ -21,7 +21,7 @@ import { Status, StatusPanel, StatusState, useStatus } from "./StatusPanel";
 
 const STORE_KEY = "VoiceLeveler_levels";
 const PUBLISH_EVERY = 1000 / TICK_MS;
-const SAVE_EVERY = 5 * 60_000 / TICK_MS;
+const SAVE_EVERY = 60_000 / TICK_MS;
 const DAY = 24 * 60 * 60 * 1000;
 const CEILING = IS_DISCORD_DESKTOP ? 500 : 100;
 const DANGER = { confirmVariant: "critical-primary" };
@@ -79,7 +79,7 @@ const settings = definePluginSettings({
         type: OptionType.SLIDER,
         displayName: "Voice Level",
         description: "How loud everyone should sound",
-        markers: [0, 50, 100, 150, 200, 250, 300],
+        markers: [10, 50, 100, 150, 200, 250, 300],
         default: 100,
         stickToMarkers: false,
         componentProps: { onValueRender: percent },
@@ -224,7 +224,7 @@ function statusOf(userId: string): Status {
     const volume = toSlider(slider);
 
     if (!settings.store.active) return { label: "Off for everyone", volume };
-    if (slider <= 0) return { label: "Muted by you", volume };
+    if (slider <= 0 || MediaEngineStore.isLocalMute(userId)) return { label: "Muted by you", volume };
     if (isExcluded(userId)) return { label: "Turned off", volume };
     if (manual.has(userId)) return { label: "You changed their volume", volume };
     if (isSkippedBot(userId)) return { label: "Bots are ignored", volume };
@@ -337,14 +337,14 @@ async function tick() {
         if (!audio) continue;
 
         const speaker = speakers.get(userId) ?? seed(userId);
-        observe(speaker, audio.audioDetected && audio.audioLevel > 0 ? audio.audioLevel : null, bounds.floor);
+        const heard = observe(speaker, audio.audioDetected && audio.audioLevel > 0 ? audio.audioLevel : null, bounds.floor);
+        if (heard != null) learned[userId] = { loudness: heard, at: now };
+
         drive(connection, userId, speaker, bounds);
         if (now - speaker.changedAt < settings.store.cooldown * 1000) continue;
 
         const measured = speaker.level;
         if (measured == null) continue;
-
-        learned[userId] = { loudness: measured, at: now };
 
         const decision = decide(measured, bounds, speaker.gain);
         if (decision) apply(speaker, decision, now);
