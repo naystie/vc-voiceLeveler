@@ -4,10 +4,10 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { BaseText } from "@components/BaseText";
 import { Button, TextButton } from "@components/Button";
 import { Card } from "@components/Card";
 import { SettingsSection } from "@components/settings/tabs/plugins/components/Common";
+import { Text } from "@components/Text";
 import { classNameFactory } from "@utils/css";
 import { proxyLazy } from "@utils/lazy";
 import { findStoreLazy } from "@webpack";
@@ -61,15 +61,15 @@ function Row({ userId, status, guildId }: { userId: string; status?: Status; gui
                 aria-hidden
             />
             <div className={cl("who")}>
-                <BaseText size="sm" weight="medium" className={cl("name")}>{nameOf(userId, guildId)}</BaseText>
-                {status?.label && <BaseText size="xs" defaultColor={false} className={cl("label")}>{status.label}</BaseText>}
+                <Text size="sm" weight="medium" className={cl("name")}>{nameOf(userId, guildId)}</Text>
+                {status?.label && <Text size="xs" defaultColor={false} className={cl("label")}>{status.label}</Text>}
             </div>
             {status?.volume != null && (
                 <>
                     <Meter volume={status.volume} leveled={status.leveled} />
-                    <BaseText size="xs" weight="semibold" defaultColor={false} className={cl("value", status.leveled && "leveled")}>
+                    <Text size="xs" weight="semibold" defaultColor={false} className={cl("value", status.leveled && "leveled")}>
                         {Math.round(status.volume)}%
-                    </BaseText>
+                    </Text>
                 </>
             )}
         </div>
@@ -101,14 +101,14 @@ export function StatusPanel() {
             <SettingsSection name="In This Call" id="vc-voice-leveler-status" description="Blue means auto level changed it">
                 {!active ? (
                     <Empty>
-                        <BaseText size="sm" defaultColor={false} className={cl("label")}>Auto Level is turned off.</BaseText>
+                        <Text size="sm" defaultColor={false} className={cl("label")}>Auto Level is turned off.</Text>
                         <Button size="small" onClick={turnOn}>Turn On</Button>
                     </Empty>
                 ) : inCall.length === 0 ? (
                     <Empty>
-                        <BaseText size="sm" defaultColor={false} className={cl("label")}>
+                        <Text size="sm" defaultColor={false} className={cl("label")}>
                             {states == null ? "You're not in a voice channel." : "No one else is here yet."}
-                        </BaseText>
+                        </Text>
                     </Empty>
                 ) : (
                     <Card className={cl("card")}>

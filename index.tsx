@@ -12,6 +12,7 @@ import { definePluginSettings } from "@api/Settings";
 import { Button } from "@components/Button";
 import { SettingsSection } from "@components/settings/tabs/plugins/components/Common";
 import { debounce } from "@shared/debounce";
+import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 import type { MediaEngineConnection, User } from "@vencord/discord-types";
 import { Alerts, MediaEngineStore, Menu, RTCConnectionStore, SelectedChannelStore, showToast, UserStore, VoiceStateStore } from "@webpack/common";
@@ -46,6 +47,7 @@ interface Memory {
 const speakers = new Map<string, Speaker>();
 const manual = new Set<string>();
 let learned: Record<string, Memory> = {};
+let running = false;
 let timer: ReturnType<typeof setInterval> | undefined;
 let channelId: string | undefined;
 let ticks = 0;
@@ -166,7 +168,7 @@ const settings = definePluginSettings({
     },
     ignoreBots: {
         type: OptionType.BOOLEAN,
-        description: "",
+        description: "Don't change the volume of bots",
         default: true,
         onChange: relevel,
         hidden: simpleMode
@@ -374,8 +376,9 @@ function relevelNow() {
     publish();
 }
 
+// settings call this even while the plugin is off
 function sync() {
-    if (settings.store.active && RTCConnectionStore.isConnected()) {
+    if (running && settings.store.active && RTCConnectionStore.isConnected()) {
         const current = RTCConnectionStore.getChannelId();
         if (current !== channelId) {
             channelId = current;
@@ -489,7 +492,7 @@ const audioDeviceContextPatch: NavContextMenuPatchCallback = (children, { render
 export default definePlugin({
     name: "VoiceLeveler",
     description: "Evens out everyone's volume in voice chat",
-    authors: [{ name: "Nays", id: 344871509677965313n }],
+    authors: [Devs.Nays],
     tags: ["Voice"],
     settings,
 
@@ -513,11 +516,13 @@ export default definePlugin({
         learned = await DataStore.get<Record<string, Memory>>(STORE_KEY) ?? {};
         forgetExpired();
 
+        running = true;
         sync();
         publish();
     },
 
     async stop() {
+        running = false;
         if (timer !== undefined) {
             clearInterval(timer);
             timer = undefined;

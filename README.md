@@ -14,7 +14,7 @@ makes everyone in voice about the same volume
 
 ## how it works
 
-- discord voice engine already knows how loud every user's voice. the plugin uses this information four times per second
+- discord's voice engine already knows how loud every user's voice is. the plugin uses this information four times per second
 - changes are temporary. your user volume settings are never touched
 - it goes by how loud someone is over their last minute of talking, so a few quiet words or one loud laugh won't change anything
 
@@ -31,8 +31,8 @@ makes everyone in voice about the same volume
 | wait between changes | 15s | cooldown before adjusting the same person again |
 | shout limit | 10 dB | drops their volume fast if they yell |
 | remember for | 30 days | how long it remembers each person's data |
-| ignore bots | on | for music bots|
-| reset auto level | | forgets everyone data and resets to default |
+| ignore bots | on | for music bots |
+| reset auto level | | forgets everyone's data and resets to default |
 
 ## heads up
 
