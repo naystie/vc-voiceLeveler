@@ -1,96 +1,153 @@
-.vc-voice-leveler-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 1.25em;
+button.vc-voice-leveler-button {
+    width: 24px;
 }
 
-.vc-voice-leveler-card {
+button.vc-voice-leveler-button.vc-voice-leveler-focusing {
+    color: var(--control-brand-foreground);
+    background-color: var(--opacity-blurple-12);
+}
+
+button.vc-voice-leveler-button.vc-voice-leveler-focusing:hover {
+    color: var(--control-brand-foreground);
+    background-color: var(--opacity-blurple-24);
+}
+
+.vc-voice-leveler-popout {
     display: flex;
     flex-direction: column;
+    width: 300px;
+    max-height: min(560px, calc(100vh - 120px));
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--background-surface-high);
+    box-shadow: var(--shadow-high);
     overflow: hidden;
 }
 
-.vc-voice-leveler-row {
+.vc-voice-leveler-section {
     display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 16px;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
 }
 
-.vc-voice-leveler-row + .vc-voice-leveler-row,
-.vc-voice-leveler-footer {
+.vc-voice-leveler-section + .vc-voice-leveler-section {
     border-top: 1px solid var(--border-subtle);
+}
+
+.vc-voice-leveler-list {
+    flex: 1;
+    min-height: 0;
+    padding-inline: 4px;
+}
+
+.vc-voice-leveler-list > .vc-voice-leveler-label,
+.vc-voice-leveler-list > .vc-voice-leveler-status {
+    padding-inline: 8px;
+}
+
+.vc-voice-leveler-heading {
+    display: flex;
+    justify-content: space-between;
+}
+
+.vc-voice-leveler-label {
+    color: var(--text-muted);
+}
+
+.vc-voice-leveler-toggle,
+.vc-voice-leveler-person {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.vc-voice-leveler-people {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.vc-voice-leveler-person {
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+}
+
+.vc-voice-leveler-person:hover {
+    background: var(--interactive-background-hover);
 }
 
 .vc-voice-leveler-who {
     display: flex;
     flex: 1;
     flex-direction: column;
+    gap: 2px;
     min-width: 0;
 }
 
 .vc-voice-leveler-name,
-.vc-voice-leveler-label {
+.vc-voice-leveler-status {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.vc-voice-leveler-label {
+.vc-voice-leveler-status {
     color: var(--text-muted);
 }
 
-.vc-voice-leveler-meter {
-    position: relative;
-    flex: 0 0 72px;
-    height: 6px;
-    border-radius: 3px;
-    background: var(--slider-track-background, var(--background-mod-strong));
+.vc-voice-leveler-status.vc-voice-leveler-leveled {
+    color: var(--text-brand);
 }
 
-.vc-voice-leveler-fill {
-    position: absolute;
-    inset: 0 auto 0 0;
-    border-radius: inherit;
-    background: var(--interactive-muted);
-    transition: width 0.25s ease;
+.vc-voice-leveler-speaking {
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px var(--status-speaking);
 }
 
-.vc-voice-leveler-fill.vc-voice-leveler-leveled {
-    background: var(--brand-500);
+.vc-voice-leveler-off .vc-voice-leveler-who,
+.vc-voice-leveler-off .vc-voice-leveler-avatar {
+    opacity: 0.6;
 }
 
-.vc-voice-leveler-notch {
-    position: absolute;
-    top: -1px;
-    bottom: -1px;
-    left: 50%;
-    width: 2px;
-    margin-left: -1px;
-    background: var(--card-background-default);
+.vc-voice-leveler-box {
+    display: flex;
+    flex: none;
 }
 
-.vc-voice-leveler-value {
-    flex: 0 0 36px;
-    color: var(--text-muted);
-    text-align: right;
-    font-variant-numeric: tabular-nums;
+.vc-voice-leveler-box > label {
+    flex: none;
 }
 
-.vc-voice-leveler-value.vc-voice-leveler-leveled {
-    color: var(--text-default);
+.vc-voice-leveler-focus {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-radius: var(--radius-sm);
+    color: var(--icon-subtle);
+    background: none;
+    cursor: pointer;
+}
+
+.vc-voice-leveler-focus:hover {
+    color: var(--icon-strong);
+    background: var(--interactive-background-hover);
+}
+
+.vc-voice-leveler-focus.vc-voice-leveler-focused {
+    color: var(--control-brand-foreground);
+    background: var(--opacity-blurple-12);
 }
 
 .vc-voice-leveler-footer {
     display: flex;
-    justify-content: flex-end;
-    padding: 8px 16px;
-}
-
-.vc-voice-leveler-empty {
-    align-items: center;
-    flex-direction: row;
     justify-content: space-between;
-    gap: 12px;
-    padding: 16px;
+    padding: 10px 12px;
+    border-top: 1px solid var(--border-subtle);
+    background: var(--background-base-lower);
 }

@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import "./styles.css";
-
 import { findGroupChildrenByChildId, NavContextMenuPatchCallback } from "@api/ContextMenu";
 import * as DataStore from "@api/DataStore";
 import { definePluginSettings } from "@api/Settings";
@@ -13,85 +11,86 @@ import { Button } from "@components/Button";
 import { SettingsSection } from "@components/settings/tabs/plugins/components/Common";
 import { debounce } from "@shared/debounce";
 import { Devs } from "@utils/constants";
+import { proxyLazy } from "@utils/lazy";
 import definePlugin, { OptionType } from "@utils/types";
 import type { MediaEngineConnection, User } from "@vencord/discord-types";
-import { Alerts, MediaEngineStore, Menu, RTCConnectionStore, SelectedChannelStore, showToast, UserStore, VoiceStateStore } from "@webpack/common";
+import { Alerts, MediaEngineStore, Menu, RTCConnectionStore, SelectedChannelStore, showToast, UserStore, VoiceStateStore, zustandCreate } from "@webpack/common";
 
-import { createSpeaker, decide, Decision, fromSlider, limit, Limits, LISTEN_SECONDS, listened, observe, ramp, Speaker, TICK_MS, toSlider, volumeFor } from "./leveler";
-import { Status, StatusPanel, StatusState, useStatus } from "./StatusPanel";
+import { LevelerButton } from "./components";
+import { COOLDOWN_MS, createSpeaker, CROWD_SMOOTHING, decide, Decision, duckFor, FOCUS_HOLD_MS, fromSlider, hear, Limits, Memory, ramp, shape, Speaker, TICK_MS, toSlider, volumeFor } from "./leveler";
+import managedStyle from "./styles.css?managed";
 
 const STORE_KEY = "VoiceLeveler_levels";
 const PUBLISH_EVERY = 1000 / TICK_MS;
 const SAVE_EVERY = 60_000 / TICK_MS;
 const DAY = 24 * 60 * 60 * 1000;
 const CEILING = IS_DISCORD_DESKTOP ? 500 : 100;
-const DANGER = { confirmVariant: "critical-primary" };
 
-interface Audio {
+interface InboundAudio {
     type: string;
     audioLevel: number;
-    audioDetected: boolean;
+    audioDetected: boolean | number;
+    decodingPLC?: number;
+    decodingNormal?: number;
 }
 
 interface Stats {
     rtp?: {
-        inbound?: Record<string, Audio[]>;
+        inbound?: Record<string, InboundAudio[]>;
     };
 }
 
-interface Memory {
-    loudness: number;
-    at: number;
+interface Status {
+    label: string;
+    volume?: number;
+    leveled?: boolean;
+    off?: boolean;
 }
+
+interface StatusState {
+    speakers: Partial<Record<string, Status>>;
+    focus: string[];
+}
+
+export const useStatus = proxyLazy(() => zustandCreate((): StatusState => ({ speakers: {}, focus: [] })));
 
 const speakers = new Map<string, Speaker>();
 const manual = new Set<string>();
+const focus = new Set<string>();
+const talkedAt = new Map<string, number>();
 let learned: Record<string, Memory> = {};
+let unsaved = false;
 let running = false;
 let timer: ReturnType<typeof setInterval> | undefined;
 let channelId: string | undefined;
 let ticks = 0;
 let busy = false;
 let published = "";
+let crowd = 0;
 
-const percent = (value: number) => `${Math.round(value)}%`;
-const decibels = (value: number) => `${Math.round(value)} dB`;
-const seconds = (value: number) => `${Math.round(value)}s`;
+export const percent = (value: number) => `${Math.round(value)}%`;
 const days = (value: number) => Math.round(value) === 1 ? "1 day" : `${Math.round(value)} days`;
 
-const simpleMode = () => !settings.store.advanced;
-
 const relevel = debounce(relevelNow, 300);
-const setLevel = debounce((value: number) => { settings.store.level = value; }, 100);
 
 function ResetSetting() {
     return (
-        <SettingsSection name="Reset Auto Level" id="vc-voice-leveler-reset" description="Forget everyone's volume and start over." inlineSetting>
+        <SettingsSection name="Reset Auto Level" id="vc-voice-leveler-reset" description="Forget how loud everyone is and start over" inlineSetting>
             <Button variant="dangerSecondary" size="small" onClick={reset}>Reset</Button>
         </SettingsSection>
     );
 }
 
-const settings = definePluginSettings({
-    status: {
-        type: OptionType.COMPONENT,
-        component: StatusPanel
-    },
+export const settings = definePluginSettings({
     level: {
         type: OptionType.SLIDER,
         displayName: "Voice Level",
         description: "How loud everyone should sound",
-        markers: [10, 50, 100, 150, 200, 250, 300],
+        markers: [10, 50, 100, 150, 200],
         default: 100,
         stickToMarkers: false,
         componentProps: { onValueRender: percent },
         onChange: relevel
-    },
-    advanced: {
-        type: OptionType.BOOLEAN,
-        displayName: "Advanced Settings",
-        description: "Show more options",
-        default: false
     },
     lowest: {
         type: OptionType.SLIDER,
@@ -101,9 +100,8 @@ const settings = definePluginSettings({
         default: 50,
         stickToMarkers: false,
         componentProps: { onValueRender: percent },
-        isValid: (value: number) => value <= settings.store.highest || "Must be lower than highest volume",
-        onChange: relevel,
-        hidden: simpleMode
+        isValid: (value: number) => value <= settings.store.highest || "Must be lower than the highest volume",
+        onChange: relevel
     },
     highest: {
         type: OptionType.SLIDER,
@@ -113,97 +111,66 @@ const settings = definePluginSettings({
         default: 200,
         stickToMarkers: false,
         componentProps: { onValueRender: percent },
-        isValid: (value: number) => value >= settings.store.lowest || "Must be higher than lowest volume",
-        onChange: relevel,
-        hidden: simpleMode
+        isValid: (value: number) => value >= settings.store.lowest || "Must be higher than the lowest volume",
+        onChange: relevel
     },
-    floor: {
-        type: OptionType.SLIDER,
-        displayName: "Noise Floor",
-        description: "Anything quieter is treated as background noise",
-        markers: [-80, -70, -60, -50, -40, -30, -20],
-        default: -40,
-        stickToMarkers: false,
-        componentProps: { onValueRender: decibels },
-        hidden: simpleMode
-    },
-    tolerance: {
-        type: OptionType.SLIDER,
-        description: "Ignore differences smaller than this",
-        markers: [0, 2, 4, 6, 8, 10, 12],
-        default: 3,
-        stickToMarkers: false,
-        componentProps: { onValueRender: decibels },
-        hidden: simpleMode
-    },
-    cooldown: {
-        type: OptionType.SLIDER,
-        displayName: "Wait Between Changes",
-        description: "How long to wait before changing someone again",
-        markers: [0, 10, 20, 30, 40, 50, 60],
-        default: 15,
-        stickToMarkers: false,
-        componentProps: { onValueRender: seconds },
-        hidden: simpleMode
-    },
-    headroom: {
-        type: OptionType.SLIDER,
+    shout: {
+        type: OptionType.BOOLEAN,
         displayName: "Shout Limit",
-        description: "Quickly turn down anyone who gets this much too loud",
-        markers: [0, 5, 10, 15, 20, 25, 30],
-        default: 10,
-        stickToMarkers: false,
-        componentProps: { onValueRender: decibels },
-        hidden: simpleMode
+        description: "Turn people down right away when they shout",
+        default: true
+    },
+    crowd: {
+        type: OptionType.BOOLEAN,
+        displayName: "Crowd Mode",
+        description: "Turn everyone down a little while lots of people talk",
+        default: false
+    },
+    custom: {
+        type: OptionType.BOOLEAN,
+        displayName: "Level Custom Volumes",
+        description: "Also level people you've set your own volume for",
+        default: true
+    },
+    ignoreBots: {
+        type: OptionType.BOOLEAN,
+        displayName: "Ignore Bots",
+        description: "Don't change the volume of bots",
+        default: true
+    },
+    showButton: {
+        type: OptionType.BOOLEAN,
+        displayName: "Voice Panel Button",
+        description: "Show the Auto Level button in the voice panel",
+        default: true
     },
     memory: {
         type: OptionType.SLIDER,
         displayName: "Remember For",
-        description: "How long to remember each person's volume",
+        description: "How long to remember how loud each person is",
         markers: [1, 3, 7, 14, 30, 60, 90],
         default: 30,
         stickToMarkers: true,
-        componentProps: { onValueRender: days },
-        hidden: simpleMode
+        componentProps: { onValueRender: days }
     },
-    ignoreBots: {
-        type: OptionType.BOOLEAN,
-        description: "Don't change the volume of bots",
-        default: true,
-        onChange: relevel,
-        hidden: simpleMode
-    },
-    active: {
-        type: OptionType.BOOLEAN,
-        description: "Turn Auto Level on or off",
-        default: true,
-        hidden: true,
-        onChange() {
-            sync();
-            publish();
-        }
+    reset: {
+        type: OptionType.COMPONENT,
+        component: ResetSetting
     },
     excluded: {
         type: OptionType.CUSTOM,
         description: "",
         default: [] as string[]
-    },
-    reset: {
-        type: OptionType.COMPONENT,
-        component: ResetSetting,
-        hidden: simpleMode
     }
 });
 
 function limits(): Limits {
-    const { level, lowest, highest, floor, tolerance, headroom } = settings.store;
+    const { level, lowest, highest, shout } = settings.store;
     return {
+        shout,
         level: fromSlider(level),
         minVolume: fromSlider(lowest),
-        maxVolume: fromSlider(Math.min(highest, CEILING)),
-        floor,
-        tolerance,
-        headroom
+        maxVolume: fromSlider(Math.min(highest, CEILING))
     };
 }
 
@@ -213,57 +180,67 @@ function voiceConnection() {
     return found;
 }
 
-function isExcluded(userId: string) {
-    return settings.store.excluded.includes(userId);
-}
-
-function isSkippedBot(userId: string) {
-    return settings.store.ignoreBots && UserStore.getUser(userId)?.bot === true;
-}
+const isExcluded = (userId: string) => settings.store.excluded.includes(userId);
+const isBot = (userId: string) => UserStore.getUser(userId)?.bot === true;
+const isSkippedBot = (userId: string) => settings.store.ignoreBots && isBot(userId);
+const isMuted = (userId: string) => MediaEngineStore.getLocalVolume(userId) <= 0 || MediaEngineStore.isLocalMute(userId);
+const isSkippedCustom = (userId: string) => !settings.store.custom && Math.round(MediaEngineStore.getLocalVolume(userId)) !== 100;
+const isUserSet = (userId: string) => manual.has(userId) || isSkippedCustom(userId);
 
 function statusOf(userId: string): Status {
-    const slider = MediaEngineStore.getLocalVolume(userId);
-    const volume = toSlider(slider);
+    const saved = MediaEngineStore.getLocalVolume(userId);
+    const volume = toSlider(saved);
 
-    if (!settings.store.active) return { label: "Off for everyone", volume };
-    if (slider <= 0 || MediaEngineStore.isLocalMute(userId)) return { label: "Muted by you", volume };
-    if (isExcluded(userId)) return { label: "Turned off", volume };
-    if (manual.has(userId)) return { label: "You changed their volume", volume };
-    if (isSkippedBot(userId)) return { label: "Bots are ignored", volume };
+    if (isMuted(userId)) return { label: "Muted by you", volume, off: true };
+    if (isExcluded(userId)) return { label: "Turned off", volume, off: true };
+    if (isSkippedBot(userId)) return { label: "Bots are ignored", volume, off: true };
+    if (isUserSet(userId)) return { label: `You set them to ${percent(volume)}`, volume, off: true };
 
     const speaker = speakers.get(userId);
-    if (speaker == null || speaker.level == null && speaker.speech.length === 0) return { label: "Hasn't talked yet", volume };
+    if (speaker?.noise === "noise") return { label: "Background noise, kept down", volume };
+    if (speaker?.noise === "open") return { label: "Mic is always on, kept down", volume };
+    if (speaker == null || speaker.level == null) return { label: "Hasn't talked yet", volume };
+    if (!speaker.ready) return { label: speaker.relearning ? "Sounds different, listening again" : "Listening", volume };
+    if (speaker.volume == null || Math.abs(speaker.volume - saved) < 0.5) return { label: "No change needed", volume };
 
-    if (speaker.volume == null || speaker.volume === slider) {
-        const label = speaker.level == null ? `Listening (${Math.floor(listened(speaker))}/${LISTEN_SECONDS}s)` : "No change needed";
-        return { label, volume };
-    }
-
-    const direction = speaker.volume > slider ? "Turned up" : "Turned down";
+    const direction = speaker.volume > saved ? "Turned up" : "Turned down";
     return {
-        label: slider === 100 ? direction : `${direction} from ${percent(volume)}`,
+        label: Math.round(saved) === 100 ? direction : `${direction} from ${percent(volume)}`,
         volume: toSlider(speaker.volume),
         leveled: true
     };
 }
 
-function statusText({ label, volume, leveled }: Status) {
+export function statusText({ label, volume, leveled }: Status) {
     return leveled && volume != null ? `${label} to ${percent(volume)}` : label;
 }
 
+export function levelCheckbox(userId: string) {
+    const locked = isSkippedBot(userId) || isMuted(userId) || isSkippedCustom(userId) && !isExcluded(userId);
+    return {
+        checked: !locked && !isExcluded(userId) && !manual.has(userId),
+        disabled: locked
+    };
+}
+
+function inCall(userId: string) {
+    const channelId = SelectedChannelStore.getVoiceChannelId();
+    return channelId != null && userId !== UserStore.getCurrentUser()?.id && userId in VoiceStateStore.getVoiceStatesForChannel(channelId);
+}
+
 function publish() {
-    const { active, excluded } = settings.store;
-    const state: StatusState = { active, speakers: {}, excluded, clearExcluded, turnOn };
-
     const voiceChannelId = SelectedChannelStore.getVoiceChannelId();
-    const inCall = voiceChannelId == null ? [] : Object.keys(VoiceStateStore.getVoiceStatesForChannel(voiceChannelId));
-    const me = UserStore.getCurrentUser().id;
+    const people = voiceChannelId == null ? [] : Object.keys(VoiceStateStore.getVoiceStatesForChannel(voiceChannelId));
+    const me = UserStore.getCurrentUser()?.id;
 
-    for (const userId of new Set([...inCall, ...speakers.keys(), ...manual, ...excluded])) {
+    // focus survives a reconnect but only shows for people who are here
+    const state: StatusState = { speakers: {}, focus: [...focus].filter(userId => people.includes(userId)) };
+
+    for (const userId of new Set([...people, ...speakers.keys(), ...manual])) {
         if (userId !== me) state.speakers[userId] = statusOf(userId);
     }
 
-    const snapshot = JSON.stringify([active, state.speakers, excluded]);
+    const snapshot = JSON.stringify(state);
     if (snapshot === published) return;
 
     published = snapshot;
@@ -274,12 +251,6 @@ function apply(speaker: Speaker, { volume, gain }: Decision, now: number) {
     speaker.volume = volume;
     speaker.gain = gain;
     speaker.changedAt = now;
-}
-
-function drive(connection: MediaEngineConnection, userId: string, speaker: Speaker, bounds: Limits) {
-    const engine = connection.localVolumes[userId] ?? 100;
-    const next = ramp(engine, limit(speaker, speaker.volume ?? MediaEngineStore.getLocalVolume(userId), bounds));
-    if (next !== engine) connection.setLocalVolume(userId, next);
 }
 
 function release(connection: MediaEngineConnection | undefined, userId: string) {
@@ -296,17 +267,23 @@ function forgetExpired() {
     const expired = Date.now() - settings.store.memory * DAY;
 
     for (const userId in learned) {
-        if (learned[userId].at <= expired) delete learned[userId];
+        if (learned[userId].at > expired) continue;
+
+        delete learned[userId];
+        unsaved = true;
     }
 }
 
-function remember() {
+async function remember() {
     forgetExpired();
-    return DataStore.set(STORE_KEY, learned);
+    if (!unsaved) return;
+
+    unsaved = false;
+    await DataStore.set(STORE_KEY, learned);
 }
 
-function seed(userId: string) {
-    const speaker = createSpeaker(learned[userId]?.loudness, MediaEngineStore.getLocalVolume(userId));
+function seed(userId: string, now: number) {
+    const speaker = createSpeaker(learned[userId], MediaEngineStore.getLocalVolume(userId), now);
     speakers.set(userId, speaker);
     return speaker;
 }
@@ -326,34 +303,56 @@ async function tick() {
 
     const now = Date.now();
     const bounds = limits();
+    const heard: [string, Speaker][] = [];
+    let talking = 0;
 
     for (const [userId, streams] of Object.entries(inbound)) {
-        if (manual.has(userId)) continue;
-
-        if (isExcluded(userId) || isSkippedBot(userId) || MediaEngineStore.getLocalVolume(userId) <= 0) {
-            release(connection, userId);
-            continue;
-        }
-
         const audio = streams.find(stream => stream.type === "audio");
         if (!audio) continue;
 
-        const speaker = speakers.get(userId) ?? seed(userId);
-        const heard = observe(speaker, audio.audioDetected && audio.audioLevel > 0 ? audio.audioLevel : null, bounds.floor);
-        if (heard != null) learned[userId] = { loudness: heard, at: now };
+        const level = audio.audioDetected && audio.audioLevel > 0 ? audio.audioLevel : null;
+        if (level != null) talkedAt.set(userId, now);
 
-        drive(connection, userId, speaker, bounds);
-        if (now - speaker.changedAt < settings.store.cooldown * 1000) continue;
+        if (isExcluded(userId) || isSkippedBot(userId) || isMuted(userId)) {
+            release(connection, userId);
+            if (level != null && !isBot(userId)) talking++;
+            continue;
+        }
 
-        const measured = speaker.level;
-        if (measured == null) continue;
+        const speaker = speakers.get(userId) ?? seed(userId, now);
+        const loudness = hear(speaker, level, now, audio.decodingPLC, audio.decodingNormal);
+        if (loudness != null) {
+            learned[userId] = { loudness, at: now };
+            unsaved = true;
+        }
 
-        const decision = decide(measured, bounds, speaker.gain);
-        if (decision) apply(speaker, decision, now);
+        if (level != null && !isBot(userId) && !speaker.noise) talking++;
+        heard.push([userId, speaker]);
     }
 
     for (const userId of [...speakers.keys()]) {
         if (!(userId in inbound)) release(connection, userId);
+    }
+    for (const userId of [...talkedAt.keys()]) {
+        if (!(userId in inbound)) talkedAt.delete(userId);
+    }
+
+    crowd += (talking - crowd) * CROWD_SMOOTHING;
+    const focusTalking = [...focus].some(userId => now - (talkedAt.get(userId) ?? -Infinity) < FOCUS_HOLD_MS);
+
+    for (const [userId, speaker] of heard) {
+        const userSet = isUserSet(userId);
+        if (!userSet && speaker.ready && speaker.level != null && now - speaker.changedAt >= COOLDOWN_MS) {
+            const decision = decide(speaker.level, bounds, speaker.gain);
+            if (decision) apply(speaker, decision, now);
+        }
+
+        const saved = MediaEngineStore.getLocalVolume(userId);
+        const duck = duckFor(focus.has(userId), focusTalking, settings.store.crowd ? crowd : 0);
+        const volume = shape(speaker, userSet ? saved : speaker.volume ?? saved, saved, bounds, duck);
+        const engine = connection.localVolumes[userId] ?? 100;
+        const next = ramp(engine, volume);
+        if (next !== engine) connection.setLocalVolume(userId, next);
     }
 
     ticks++;
@@ -361,61 +360,65 @@ async function tick() {
     if (ticks % SAVE_EVERY === 0) remember();
 }
 
+// settings call this even while the plugin is off
 function relevelNow() {
+    if (!running) return;
+
     const now = Date.now();
     const bounds = limits();
 
-    for (const speaker of speakers.values()) {
-        const measured = speaker.level;
-        if (measured == null) continue;
-
-        const decision = volumeFor(measured, bounds);
-        if (decision) apply(speaker, decision, now);
+    for (const [userId, speaker] of speakers) {
+        if (speaker.ready && speaker.level != null && !isUserSet(userId)) apply(speaker, volumeFor(speaker.level, bounds), now);
     }
 
     publish();
 }
 
-// settings call this even while the plugin is off
-function sync() {
-    if (running && settings.store.active && RTCConnectionStore.isConnected()) {
-        const current = RTCConnectionStore.getChannelId();
-        if (current !== channelId) {
-            channelId = current;
-            manual.clear();
-        }
-
-        timer ??= setInterval(tick, TICK_MS);
-        return;
-    }
-
-    if (SelectedChannelStore.getVoiceChannelId() == null) channelId = undefined;
+function pause() {
     if (timer === undefined) return;
 
     clearInterval(timer);
     timer = undefined;
+    talkedAt.clear();
+    crowd = 0;
     releaseAll();
-    publish();
     remember();
+}
+
+function sync() {
+    const current = SelectedChannelStore.getVoiceChannelId();
+    if (current !== channelId) {
+        channelId = current;
+        manual.clear();
+        focus.clear();
+    }
+
+    if (running && RTCConnectionStore.isConnected()) {
+        timer ??= setInterval(tick, TICK_MS);
+        return;
+    }
+
+    pause();
+    publish();
 }
 
 async function reset() {
     const confirmed = await Alerts.confirm({
         title: "Reset Auto Level?",
-        body: "Auto level will forget how loud everyone is",
-        confirmText: "Reset",
-        ...DANGER
+        body: "Auto Level will forget how loud everyone is.",
+        confirmText: "Reset"
     });
     if (!confirmed) return;
 
     releaseAll();
     learned = {};
+    unsaved = false;
     publish();
     await DataStore.del(STORE_KEY);
     showToast({ text: "Auto Level reset" });
 }
 
-function toggle(userId: string) {
+export function toggle(userId: string) {
     const { excluded } = settings.store;
 
     if (manual.has(userId) || excluded.includes(userId)) {
@@ -429,64 +432,45 @@ function toggle(userId: string) {
     publish();
 }
 
-function clearExcluded() {
+export function toggleFocus(userId: string) {
+    if (!focus.delete(userId)) focus.add(userId);
+    publish();
+}
+
+export function turnAllBackOn() {
     settings.store.excluded = [];
     publish();
 }
 
-function turnOn() {
-    settings.store.active = true;
-}
-
-const userContextPatch: NavContextMenuPatchCallback = (children, { user }: { user: User; }) => {
-    const { active, excluded } = settings.use(["active", "excluded", "ignoreBots"]);
-    const { speakers: status }: StatusState = useStatus();
+const userContextPatch: NavContextMenuPatchCallback = (children, { user }: { user?: User; }) => {
+    settings.use(["excluded", "ignoreBots", "custom"]);
+    const { speakers: status, focus: focused } = useStatus();
 
     const group = findGroupChildrenByChildId("user-volume", children);
     if (!group || !user) return;
 
-    const skipped = isSkippedBot(user.id);
-
-    group.splice(group.findIndex(child => child?.props?.id === "user-volume") + 1, 0,
+    const items = [
         <Menu.MenuCheckboxItem
+            key="vc-voice-leveler"
             id="vc-voice-leveler"
             label="Auto Level"
             subtext={statusText(status[user.id] ?? statusOf(user.id))}
-            checked={active && !skipped && !manual.has(user.id) && !excluded.includes(user.id)}
-            disabled={!active || skipped}
             action={() => toggle(user.id)}
+            {...levelCheckbox(user.id)}
         />
-    );
-};
+    ];
 
-const audioDeviceContextPatch: NavContextMenuPatchCallback = (children, { renderOutputDevices }: { renderOutputDevices?: boolean; }) => {
-    const { active, level } = settings.use(["active", "level"]);
-    if (!renderOutputDevices) return;
-
-    children.push(
-        <Menu.MenuSeparator />,
+    if (inCall(user.id)) items.push(
         <Menu.MenuCheckboxItem
-            id="vc-voice-leveler-active"
-            label="Auto Level"
-            checked={active}
-            action={() => { settings.store.active = !active; }}
-        />,
-        <Menu.MenuControlItem
-            id="vc-voice-leveler-level"
-            label="Voice Level"
-            control={(props, ref) => (
-                <Menu.MenuSliderControl
-                    ref={ref}
-                    {...props}
-                    minValue={10}
-                    maxValue={300}
-                    value={level}
-                    onChange={setLevel}
-                    renderValue={percent}
-                />
-            )}
+            key="vc-voice-leveler-focus"
+            id="vc-voice-leveler-focus"
+            label="Focus"
+            checked={focused.includes(user.id)}
+            action={() => toggleFocus(user.id)}
         />
     );
+
+    group.splice(group.findIndex(child => child?.props?.id === "user-volume") + 1, 0, ...items);
 };
 
 export default definePlugin({
@@ -495,10 +479,22 @@ export default definePlugin({
     authors: [Devs.Nays],
     tags: ["Voice"],
     settings,
+    managedStyle,
+
+    patches: [
+        {
+            find: "hasRemoteVoiceState:",
+            replacement: {
+                match: /grow:0,shrink:0,className:\i\.\i,children:\[\i&&!\i\?\(0,\i\.jsx\)\(\i,\{channel:\i\}\):null/,
+                replace: "$&,$self.renderButton()"
+            }
+        }
+    ],
+
+    renderButton: () => <LevelerButton />,
 
     contextMenus: {
-        "user-context": userContextPatch,
-        "audio-device-context": audioDeviceContextPatch
+        "user-context": userContextPatch
     },
 
     flux: {
@@ -507,7 +503,6 @@ export default definePlugin({
             if (context !== "default") return;
 
             manual.add(userId);
-            speakers.delete(userId);
             publish();
         }
     },
@@ -521,17 +516,11 @@ export default definePlugin({
         publish();
     },
 
-    async stop() {
+    stop() {
         running = false;
-        if (timer !== undefined) {
-            clearInterval(timer);
-            timer = undefined;
-        }
-
-        releaseAll();
+        pause();
         manual.clear();
-        channelId = undefined;
+        focus.clear();
         publish();
-        await remember();
     }
 });
